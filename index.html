@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CommuteGuard — Live</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c10; --surface: #111318; --border: #1e222c;
+    --accent: #f0c040; --danger: #ff4d4d; --warn: #ff9900;
+    --ok: #4af0a0; --text: #e8eaf0; --muted: #5a6070; --card: #14171f;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; min-height: 100vh; overflow-x: hidden; }
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image: linear-gradient(rgba(240,192,64,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(240,192,64,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+  .container { position: relative; z-index: 1; max-width: 480px; margin: 0 auto; padding: 24px 20px 40px; }
+  .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 28px; animation: fadeDown .5s ease both; }
+  .logo { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 22px; letter-spacing: -.5px; color: var(--accent); }
+  .logo span { color: var(--text); opacity: .4; }
+  .clock { text-align: right; font-size: 11px; color: var(--muted); line-height: 1.6; }
+  .clock .time-big { font-size: 20px; font-weight: 500; color: var(--text); display: block; font-family: 'Syne', sans-serif; }
+  .status-banner { border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 14px; animation: fadeDown .5s .1s ease both; }
+  .status-banner.danger { background: rgba(255,77,77,.1); border: 1px solid rgba(255,77,77,.3); }
+  .status-banner.warn   { background: rgba(255,153,0,.1); border: 1px solid rgba(255,153,0,.3); }
+  .status-banner.ok     { background: rgba(74,240,160,.08); border: 1px solid rgba(74,240,160,.25); }
+  .status-icon { font-size: 28px; flex-shrink: 0; }
+  .status-text .label { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; margin-bottom: 3px; }
+  .status-banner.danger .label { color: var(--danger); }
+  .status-banner.warn .label   { color: var(--warn); }
+  .status-banner.ok .label     { color: var(--ok); }
+  .status-text .sub { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .pulse-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-left: auto; }
+  .pulse-dot.red    { background: var(--danger); animation: p-red 1.5s infinite; }
+  .pulse-dot.yellow { background: var(--warn); animation: p-yellow 1.5s infinite; }
+  .pulse-dot.green  { background: var(--ok); }
+  @keyframes p-red    { 0%,100%{box-shadow:0 0 0 0 rgba(255,77,77,.4)} 70%{box-shadow:0 0 0 8px rgba(255,77,77,0)} }
+  @keyframes p-yellow { 0%,100%{box-shadow:0 0 0 0 rgba(255,153,0,.4)} 70%{box-shadow:0 0 0 8px rgba(255,153,0,0)} }
+  .weather-strip { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; display: flex; align-items: center; gap: 12px; margin-bottom: 20px; font-size: 11px; color: var(--muted); animation: fadeDown .5s .15s ease both; }
+  .w-icon { font-size: 18px; } .w-text { flex: 1; line-height: 1.5; }
+  .w-temp { font-family: 'Syne', sans-serif; font-size: 16px; color: var(--text); }
+  .rec-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; animation: fadeDown .5s .2s ease both; }
+  .rec-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+  .rec-main  { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 26px; color: var(--accent); margin-bottom: 4px; }
+  .rec-sub   { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .rec-why   { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); line-height: 1.7; }
+  .rec-why strong { color: var(--text); }
+  .section-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .route-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 10px; animation: fadeDown .5s .35s ease both; transition: border-color .2s; }
+  .route-card:hover { border-color: rgba(240,192,64,.3); }
+  .route-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .bus-badge { background: #1a2030; border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 13px; font-weight: 500; color: var(--text); font-family: 'Syne', sans-serif; }
+  .bus-badge.active { border-color: var(--ok); color: var(--ok); }
+  .route-name { font-size: 11px; color: var(--muted); flex: 1; min-width: 100px; }
+  .delay-tag { font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 500; white-space: nowrap; }
+  .delay-tag.red    { background: rgba(255,77,77,.15); color: var(--danger); border: 1px solid rgba(255,77,77,.3); }
+  .delay-tag.yellow { background: rgba(255,153,0,.15); color: var(--warn); border: 1px solid rgba(255,153,0,.3); }
+  .delay-tag.green  { background: rgba(74,240,160,.1); color: var(--ok); border: 1px solid rgba(74,240,160,.25); }
+  .delay-tag.grey   { background: rgba(90,96,112,.2); color: var(--muted); border: 1px solid var(--border); }
+  .route-times { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .time-cell { background: #0f1117; border-radius: 8px; padding: 8px 10px; }
+  .tc-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
+  .tc-val { font-size: 13px; font-weight: 500; color: var(--text); font-family: 'Syne', sans-serif; }
+  .tc-val.late { color: var(--danger); } .tc-val.warn { color: var(--warn); } .tc-val.ok { color: var(--ok); } .tc-val.muted { color: var(--muted); font-size: 11px; }
+  .trip-list { margin-top: 10px; }
+  .trip-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .trip-row:last-child { border-bottom: none; }
+  .trip-route { background: #1a2030; border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 11px; font-family: 'Syne', sans-serif; min-width: 36px; text-align: center; }
+  .trip-dest { flex: 1; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trip-time { color: var(--text); font-weight: 500; white-space: nowrap; }
+  .trip-time.soon { color: var(--ok); } .trip-time.very-soon { color: var(--warn); }
+  .transfer-row { display: flex; align-items: center; gap: 8px; margin: 14px 0 6px; font-size: 11px; color: var(--muted); animation: fadeDown .5s .4s ease both; }
+  .transfer-line { flex: 1; height: 1px; background: var(--border); }
+  .e-badge { background: #0039A6; color: #fff; border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-family: 'Syne', sans-serif; font-weight: 700; flex-shrink: 0; }
+  .live-badge { display: inline-flex; align-items: center; gap: 5px; background: rgba(74,240,160,.08); border: 1px solid rgba(74,240,160,.2); border-radius: 20px; padding: 2px 8px; font-size: 10px; color: var(--ok); }
+  .live-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); animation: blink 1.5s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.​​​​​​​​​​​​​​​​
