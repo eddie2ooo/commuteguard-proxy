@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 const FormData = require('form-data');
+const https = require('https');
 
 const app = express();
 app.use(cors());
@@ -28,7 +29,7 @@ async function getToken() {
   const data = await resp.json();
   if (data.Authenticated === 'True') {
     cachedToken = data.UserToken;
-    tokenExpiry = Date.now() + 23 * 60 * 60 * 1000; // 23 hours
+    tokenExpiry = Date.now() + 23 * 60 * 60 * 1000;
     return cachedToken;
   }
   throw new Error('NJT authentication failed');
@@ -96,4 +97,15 @@ app.get('/trips/:route/:location', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CommuteGuard proxy running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`CommuteGuard proxy running on port ${PORT}`);
+
+  // Keep-alive ping every 10 minutes to prevent Render free tier sleep
+  setInterval(() => {
+    https.get('https://commuteguard-proxy.onrender.com', (res) => {
+      console.log(`Keep-alive ping: ${res.statusCode}`);
+    }).on('error', (e) => {
+      console.log(`Keep-alive ping failed: ${e.message}`);
+    });
+  }, 10 * 60 * 1000);
+});
