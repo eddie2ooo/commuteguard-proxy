@@ -1,271 +1,103 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CommuteGuard — Live</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #0a0c10; --surface: #111318; --border: #1e222c;
-    --accent: #f0c040; --danger: #ff4d4d; --warn: #ff9900;
-    --ok: #4af0a0; --text: #e8eaf0; --muted: #5a6070; --card: #14171f;
+const express = require('express');
+const cors = require('cors');
+const fetch = require('node-fetch');
+const FormData = require('form-data');
+const https = require('https');
+
+const app = express();
+app.use(cors({ origin: '*' }));
+app.use(express.json());
+
+const NJT_BASE = 'https://pcsdata.njtransit.com/api/BUSDV2';
+const USERNAME = 'eddie2ooo';
+const PASSWORD = '!sX#Rb@6';
+
+let cachedToken = null;
+let tokenExpiry = null;
+
+async function getToken() {
+  if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
+    return cachedToken;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; min-height: 100vh; overflow-x: hidden; }
-  body::before {
-    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    background-image: linear-gradient(rgba(240,192,64,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(240,192,64,0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
+  const form = new FormData();
+  form.append('username', USERNAME);
+  form.append('password', PASSWORD);
+  const resp = await fetch(`${NJT_BASE}/authenticateUser`, {
+    method: 'POST', body: form
+  });
+  const data = await resp.json();
+  if (data.Authenticated === 'True') {
+    cachedToken = data.UserToken;
+    tokenExpiry = Date.now() + 23 * 60 * 60 * 1000;
+    return cachedToken;
   }
-  .container { position: relative; z-index: 1; max-width: 480px; margin: 0 auto; padding: 24px 20px 40px; }
-  .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 28px; animation: fadeDown .5s ease both; }
-  .logo { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 22px; letter-spacing: -.5px; color: var(--accent); }
-  .logo span { color: var(--text); opacity: .4; }
-  .clock { text-align: right; font-size: 11px; color: var(--muted); line-height: 1.6; }
-  .clock .time-big { font-size: 20px; font-weight: 500; color: var(--text); display: block; font-family: 'Syne', sans-serif; }
-  .status-banner { border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 14px; animation: fadeDown .5s .1s ease both; }
-  .status-banner.danger { background: rgba(255,77,77,.1); border: 1px solid rgba(255,77,77,.3); }
-  .status-banner.warn   { background: rgba(255,153,0,.1); border: 1px solid rgba(255,153,0,.3); }
-  .status-banner.ok     { background: rgba(74,240,160,.08); border: 1px solid rgba(74,240,160,.25); }
-  .status-icon { font-size: 28px; flex-shrink: 0; }
-  .status-text .label { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; margin-bottom: 3px; }
-  .status-banner.danger .label { color: var(--danger); }
-  .status-banner.warn .label   { color: var(--warn); }
-  .status-banner.ok .label     { color: var(--ok); }
-  .status-text .sub { font-size: 11px; color: var(--muted); line-height: 1.5; }
-  .pulse-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-left: auto; }
-  .pulse-dot.red    { background: var(--danger); animation: p-red 1.5s infinite; }
-  .pulse-dot.yellow { background: var(--warn); animation: p-yellow 1.5s infinite; }
-  .pulse-dot.green  { background: var(--ok); }
-  @keyframes p-red    { 0%,100%{box-shadow:0 0 0 0 rgba(255,77,77,.4)} 70%{box-shadow:0 0 0 8px rgba(255,77,77,0)} }
-  @keyframes p-yellow { 0%,100%{box-shadow:0 0 0 0 rgba(255,153,0,.4)} 70%{box-shadow:0 0 0 8px rgba(255,153,0,0)} }
-  .weather-strip { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; display: flex; align-items: center; gap: 12px; margin-bottom: 20px; font-size: 11px; color: var(--muted); animation: fadeDown .5s .15s ease both; }
-  .w-icon { font-size: 18px; } .w-text { flex: 1; line-height: 1.5; }
-  .w-temp { font-family: 'Syne', sans-serif; font-size: 16px; color: var(--text); }
-  .rec-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; animation: fadeDown .5s .2s ease both; }
-  .rec-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
-  .rec-main  { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 26px; color: var(--accent); margin-bottom: 4px; }
-  .rec-sub   { font-size: 12px; color: var(--muted); line-height: 1.6; }
-  .rec-why   { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); line-height: 1.7; }
-  .rec-why strong { color: var(--text); }
-  .section-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .route-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 10px; animation: fadeDown .5s .35s ease both; transition: border-color .2s; }
-  .route-card:hover { border-color: rgba(240,192,64,.3); }
-  .route-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-  .bus-badge { background: #1a2030; border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 13px; font-weight: 500; color: var(--text); font-family: 'Syne', sans-serif; }
-  .bus-badge.active { border-color: var(--ok); color: var(--ok); }
-  .route-name { font-size: 11px; color: var(--muted); flex: 1; min-width: 100px; }
-  .delay-tag { font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 500; white-space: nowrap; }
-  .delay-tag.red    { background: rgba(255,77,77,.15); color: var(--danger); border: 1px solid rgba(255,77,77,.3); }
-  .delay-tag.yellow { background: rgba(255,153,0,.15); color: var(--warn); border: 1px solid rgba(255,153,0,.3); }
-  .delay-tag.green  { background: rgba(74,240,160,.1); color: var(--ok); border: 1px solid rgba(74,240,160,.25); }
-  .delay-tag.grey   { background: rgba(90,96,112,.2); color: var(--muted); border: 1px solid var(--border); }
-  .route-times { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-  .time-cell { background: #0f1117; border-radius: 8px; padding: 8px 10px; }
-  .tc-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
-  .tc-val { font-size: 13px; font-weight: 500; color: var(--text); font-family: 'Syne', sans-serif; }
-  .tc-val.late { color: var(--danger); } .tc-val.warn { color: var(--warn); } .tc-val.ok { color: var(--ok); } .tc-val.muted { color: var(--muted); font-size: 11px; }
-  .trip-list { margin-top: 10px; }
-  .trip-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
-  .trip-row:last-child { border-bottom: none; }
-  .trip-route { background: #1a2030; border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 11px; font-family: 'Syne', sans-serif; min-width: 36px; text-align: center; }
-  .trip-dest { flex: 1; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .trip-time { color: var(--text); font-weight: 500; white-space: nowrap; }
-  .trip-time.soon { color: var(--ok); } .trip-time.very-soon { color: var(--warn); }
-  .transfer-row { display: flex; align-items: center; gap: 8px; margin: 14px 0 6px; font-size: 11px; color: var(--muted); animation: fadeDown .5s .4s ease both; }
-  .transfer-line { flex: 1; height: 1px; background: var(--border); }
-  .e-badge { background: #0039A6; color: #fff; border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-family: 'Syne', sans-serif; font-weight: 700; flex-shrink: 0; }
-  .live-badge { display: inline-flex; align-items: center; gap: 5px; background: rgba(74,240,160,.08); border: 1px solid rgba(74,240,160,.2); border-radius: 20px; padding: 2px 8px; font-size: 10px; color: var(--ok); }
-  .live-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); animation: blink 1.5s infinite; }
-  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-  .sub-note { font-size: 10px; color: var(--muted); line-height: 1.6; margin-top: 8px; }
-  .alt-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px; transition: border-color .3s; }
-  .alt-card.recommended { border-color: rgba(74,240,160,.4); background: rgba(74,240,160,.04); }
-  .alt-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
-  .alt-title { font-size: 11px; color: var(--muted); flex: 1; }
-  .adv-pill { border-radius: 20px; padding: 2px 10px; font-size: 10px; }
-  .adv-pill.good { background: rgba(74,240,160,.1); color: var(--ok); border: 1px solid rgba(74,240,160,.2); }
-  .adv-pill.bad  { background: rgba(255,77,77,.1); color: var(--danger); border: 1px solid rgba(255,77,77,.2); }
-  .adv-pill.neutral { background: rgba(90,96,112,.2); color: var(--muted); border: 1px solid var(--border); }
-  .settings-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-top: 20px; animation: fadeDown .5s .5s ease both; }
-  .s-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
-  .s-row:last-child { border-bottom: none; }
-  .s-label { color: var(--muted); } .s-val { color: var(--text); font-weight: 500; }
-  .s-val.editable { color: var(--accent); cursor: pointer; border-bottom: 1px dashed rgba(240,192,64,.4); }
-  .api-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
-  .api-row:last-child { border-bottom: none; }
-  .api-live { color: var(--ok); } .api-pending { color: var(--warn); }
-  .key-row { display: flex; gap: 8px; margin-top: 10px; }
-  .key-input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 8px 10px; font-family: 'DM Mono', monospace; font-size: 11px; outline: none; }
-  .key-input:focus { border-color: rgba(240,192,64,.4); } .key-input::placeholder { color: var(--muted); }
-  .key-btn { padding: 8px 14px; background: rgba(240,192,64,.1); border: 1px solid rgba(240,192,64,.3); border-radius: 8px; color: var(--accent); font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; }
-  .refresh-btn { width: 100%; margin-top: 20px; padding: 14px; background: transparent; border: 1px solid rgba(240,192,64,.4); border-radius: 10px; color: var(--accent); font-family: 'DM Mono', monospace; font-size: 12px; letter-spacing: 1px; cursor: pointer; transition: all .2s; animation: fadeDown .5s .55s ease both; }
-  .refresh-btn:hover { background: rgba(240,192,64,.08); border-color: var(--accent); } .refresh-btn:active { transform: scale(.98); }
-  .footer { text-align: center; font-size: 10px; color: var(--muted); margin-top: 24px; line-height: 1.8; animation: fadeDown .5s .6s ease both; }
-  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100; align-items: center; justify-content: center; padding: 20px; }
-  .modal-overlay.open { display: flex; }
-  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 24px; width: 100%; max-width: 380px; max-height: 90vh; overflow-y: auto; }
-  .modal h3 { font-family: 'Syne', sans-serif; font-size: 16px; color: var(--accent); margin-bottom: 16px; }
-  .modal label { display: block; font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin: 14px 0 6px; }
-  .modal input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 10px 12px; font-family: 'DM Mono', monospace; font-size: 13px; outline: none; }
-  .modal input:focus { border-color: rgba(240,192,64,.4); }
-  .modal-btns { display: flex; gap: 10px; margin-top: 20px; }
-  .btn-save { flex: 1; padding: 12px; background: var(--accent); color: #000; border: none; border-radius: 8px; font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer; }
-  .btn-cancel { padding: 12px 16px; background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; font-family: 'DM Mono', monospace; font-size: 12px; cursor: pointer; }
-  .loading-overlay { display: none; position: fixed; inset: 0; background: rgba(10,12,16,.88); z-index: 200; align-items: center; justify-content: center; flex-direction: column; gap: 14px; font-size: 12px; color: var(--muted); }
-  .loading-overlay.show { display: flex; }
-  .spin { font-size: 32px; animation: spin 1s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes fadeDown { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
-</style>
-</head>
-<body>
-<div class="loading-overlay" id="loadingOverlay"><div class="spin">&#x27F3;</div><div id="loadingMsg">Fetching live data&hellip;</div></div>
-<div class="modal-overlay" id="settingsModal">
-  <div class="modal">
-    <h3>&#x2699; Preferences</h3>
-    <label>Arrival deadline</label><input type="time" id="inp_arrival" value="08:45">
-    <label>Alt route advantage threshold (mins)</label><input type="number" id="inp_threshold" value="20" min="5" max="60">
-    <label>OpenWeather API key (optional)</label><input type="text" id="inp_owkey" placeholder="Paste key here">
-    <div class="modal-btns">
-      <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
-      <button class="btn-save" onclick="saveSettings()">Save</button>
-    </div>
-  </div>
-</div>
-<div class="container">
-  <div class="header">
-    <div>
-      <div class="logo">Commute<span>Guard</span></div>
-      <div style="font-size:10px;color:var(--muted);margin-top:3px;">7000 Kennedy Blvd E &rarr; 55 E 52nd St</div>
-    </div>
-    <div class="clock"><span class="time-big" id="liveClock">--:--</span><span id="liveDate"></span></div>
-  </div>
-  <div class="status-banner warn" id="statusBanner">
-    <div class="status-icon" id="statusIcon">&#x27F3;</div>
-    <div class="status-text"><div class="label" id="statusLabel">Loading live data&hellip;</div><div class="sub" id="statusSub">Connecting to NJ Transit + MTA feeds</div></div>
-    <div class="pulse-dot yellow" id="pulseDot"></div>
-  </div>
-  <div class="weather-strip">
-    <div class="w-icon" id="weatherIcon">&#x1F324;</div>
-    <div class="w-text" id="weatherText"><span style="color:var(--warn)">Add OpenWeather key for live weather</span></div>
-    <div class="w-temp" id="weatherTemp">--&deg;F</div>
-  </div>
-  <div class="rec-box">
-    <div class="rec-label">&#x23F1; Recommended Departure</div>
-    <div class="rec-main" id="recTime">--:--</div>
-    <div class="rec-sub" id="recSub">Calculating&hellip;</div>
-    <div class="rec-why" id="recWhy"></div>
-  </div>
-  <div class="section-label"><span>&#x1F4CD; Primary &mdash; Blvd East Buses</span><span class="live-badge"><span class="live-dot"></span>LIVE</span></div>
-  <div class="route-card">
-    <div class="route-top">
-      <span class="bus-badge" id="badge128">128</span><span class="bus-badge" id="badge165">165</span><span class="bus-badge" id="badge166">166</span><span class="bus-badge" id="badge168">168</span>
-      <span class="route-name">Blvd East @ 69th &rarr; Port Authority</span>
-      <span class="delay-tag grey" id="tag_primary">LOADING</span>
-    </div>
-    <div class="route-times">
-      <div class="time-cell"><div class="tc-label">Next bus</div><div class="tc-val" id="bus_next">--:--</div></div>
-      <div class="time-cell"><div class="tc-label">Route</div><div class="tc-val" id="bus_route">--</div></div>
-      <div class="time-cell"><div class="tc-label">PABT arrive</div><div class="tc-val" id="bus_pabt">--:--</div></div>
-    </div>
-    <div class="trip-list" id="primaryTripList"></div>
-    <div class="sub-note" id="primaryNote"></div>
-  </div>
-  <div class="transfer-row">
-    <div class="transfer-line"></div><div class="e-badge">E</div>
-    <div style="font-size:11px;color:var(--muted)">Transfer at Port Authority &rarr; E train &rarr; 5th Ave/53rd St</div>
-    <div class="transfer-line"></div>
-  </div>
-  <div class="section-label" style="margin-top:14px"><span>&#x1F687; E Train &mdash; Port Auth &rarr; 5th Ave/53rd St</span><span class="live-badge"><span class="live-dot"></span>LIVE</span></div>
-  <div class="route-card">
-    <div class="route-top">
-      <div class="e-badge" style="width:28px;height:28px;font-size:14px">E</div>
-      <span class="route-name">42nd St-Port Authority &rarr; 5th Ave/53rd St &middot; ~12 min &middot; 4 min walk</span>
-      <span class="delay-tag grey" id="tag_etrain">LOADING</span>
-    </div>
-    <div class="route-times">
-      <div class="time-cell"><div class="tc-label">Next E train</div><div class="tc-val" id="etrain_t1">--:--</div></div>
-      <div class="time-cell"><div class="tc-label">Following</div><div class="tc-val" id="etrain_t2">--:--</div></div>
-      <div class="time-cell"><div class="tc-label">Office arrive</div><div class="tc-val" id="etrain_arrive">--:--</div></div>
-    </div>
-    <div class="sub-note" id="etrainNote"></div>
-  </div>
-  <div class="section-label" style="margin-top:16px"><span>&#x1F500; Alt &mdash; Ferry Rd Buses (156/158/159)</span><span class="live-badge"><span class="live-dot"></span>LIVE</span></div>
-  <div class="alt-card" id="altCard">
-    <div class="alt-header">
-      <span class="bus-badge" id="badge156">156</span><span class="bus-badge" id="badge158">158</span><span class="bus-badge" id="badge159">159</span>
-      <span class="alt-title">River Rd / Ferry Rd &rarr; Port Authority</span>
-      <span class="adv-pill neutral" id="altPill">loading&hellip;</span>
-    </div>
-    <div class="route-times">
-      <div class="time-cell"><div class="tc-label">Next bus</div><div class="tc-val" id="alt_next">--:--</div></div>
-      <div class="time-cell"><div class="tc-label">Route</div><div class="tc-val" id="alt_route">--</div></div>
-      <div class="time-cell"><div class="tc-label">vs Primary</div><div class="tc-val" id="alt_vs">--</div></div>
-    </div>
-    <div class="sub-note" id="altNote">Only recommended if it saves &ge;<span id="threshDisp">20</span> min vs. primary.</div>
-  </div>
-  <div class="settings-card">
-    <div class="section-label" style="margin-bottom:10px">&#x2699; Settings &amp; API Status</div>
-    <div class="s-row"><span class="s-label">Arrival deadline</span><span class="s-val editable" id="disp_arrival" onclick="openSettings()">8:45 AM</span></div>
-    <div class="s-row"><span class="s-label">Depart by</span><span class="s-val" id="disp_depart">&mdash;</span></div>
-    <div class="s-row"><span class="s-label">Alt threshold</span><span class="s-val editable" id="disp_threshold" onclick="openSettings()">20 min</span></div>
-    <div style="margin-top:14px;margin-bottom:8px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted)">Data Sources</div>
-    <div class="api-row"><span style="color:var(--muted)">NJ Transit buses</span><span id="statusNjt" class="api-pending">Connecting&hellip;</span></div>
-    <div class="api-row"><span style="color:var(--muted)">MTA E train</span><span id="statusMta" class="api-pending">Connecting&hellip;</span></div>
-    <div class="api-row"><span style="color:var(--muted)">Weather</span><span id="statusWeather" class="api-pending">Key needed</span></div>
-    <div style="margin-top:14px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">OpenWeather API Key</div>
-    <div class="key-row">
-      <input class="key-input" type="text" id="owKeyInput" placeholder="Paste key to enable live weather">
-      <button class="key-btn" onclick="saveOWKey()">Save</button>
-    </div>
-  </div>
-  <button class="refresh-btn" onclick="refreshAll()">&#x27F3; &nbsp;REFRESH LIVE DATA</button>
-  <div class="footer">NJ Transit BUSDATA &middot; MTA GTFS-RT &middot; Auto-refresh every 3 min<br>Last updated: <span id="lastUpdated">&mdash;</span></div>
-</div>
-<script>
-const PROXY='https://commuteguard-proxy.onrender.com';
-const RIDE_MINS=12,WALK_MINS=4,BUS_JOURNEY=22;
-const BLVD_STOP_PRIMARY='20452',BLVD_STOP_ALT='20456',FERRY_STOP_ID='20451';
-let cfg={arrivalTime:'08:45',altThreshold:20,owKey:localStorage.getItem('cg_ow')||''};
-function tickClock(){const n=new Date();document.getElementById('liveClock').textContent=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');const D=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];document.getElementById('liveDate').textContent=`${D[n.getDay()]} ${M[n.getMonth()]} ${n.getDate()}`;}
-setInterval(tickClock,1000);tickClock();
-const addMins=(d,m)=>new Date(d.getTime()+m*60000);
-function fmt12(d){if(!d)return'--:--';const h=d.getHours(),m=d.getMinutes();return`${h%12||12}:${String(m).padStart(2,'0')} ${h>=12?'PM':'AM'}`;}
-function minsAway(d){const diff=Math.round((d-new Date())/60000);return diff<=0?'Now':diff===1?'1 min':`${diff} min`;}
-function minsUntil(d){return Math.round((d-new Date())/60000);}
-function timeToday(hhmm){const[h,m]=hhmm.split(':').map(Number);const d=new Date();d.setHours(h,m,0,0);return d;}
-function parseNjtTime(str){if(!str)return null;str=str.trim();const inMatch=str.match(/in\s+(\d+)\s*min/i);if(inMatch)return addMins(new Date(),parseInt(inMatch[1]));if(/^now$/i.test(str))return new Date();const tm=str.match(/(\d+):(\d+)\s*(AM|PM)/i);if(tm){let h=parseInt(tm[1]),m=parseInt(tm[2]);const ap=tm[3].toUpperCase();if(ap==='PM'&&h!==12)h+=12;if(ap==='AM'&&h===12)h=0;const d=new Date();d.setHours(h,m,0,0);if(d<new Date())d.setDate(d.getDate()+1);return d;}return null;}
-async function fetchNjtBuses(stopId,routes){const resp=await fetch(`${PROXY}/buses/${stopId}`);if(!resp.ok)throw new Error(`Proxy ${resp.status}`);const data=await resp.json();if(data.error)throw new Error(data.error);const trips=data.DVTrip||[];const parsed=trips.filter(t=>routes.includes(String(t.public_route).replace(/\D/g,''))).map(t=>({route:t.public_route,dest:t.header?.trim(),time:parseNjtTime(t.departuretime),passload:t.passload,lane:t.lanegate})).filter(t=>t.time!==null);parsed.sort((a,b)=>a.time-b.time);return parsed;}
-async function fetchEtrain(){const otpUrl='https://otp-mta-prod.camsys-apps.com/otp/routers/default/index/stops/MTASBWY:A27/stoptimes?omitNonPickups=true';try{const r=await fetch(otpUrl,{headers:{Accept:'application/json'}});if(!r.ok)throw new Error(`OTP ${r.status}`);const data=await r.json();const trains=[];const now=new Date();const midnight=new Date(now);midnight.setHours(0,0,0,0);for(const pattern of(Array.isArray(data)?data:[])){const routeId=pattern?.pattern?.route?.id||'';if(!routeId.includes(':E'))continue;if(pattern?.pattern?.directionId!==0)continue;for(const st of(pattern.times||[])){const secs=st.realtimeDeparture??st.scheduledDeparture;if(secs==null)continue;const dep=new Date(midnight.getTime()+secs*1000);if(dep>now)trains.push({time:dep,realtime:st.realtimeDeparture!=null});}}trains.sort((a,b)=>a.time-b.time);if(trains.length>=1)return{trains:trains.slice(0,3),live:true,alerts:[]};throw new Error('No E trains found');}catch(e){const alerts=[];try{const ar=await fetch('https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/camsys%2Fsubway-alerts.json',{headers:{Accept:'application/json'}});if(ar.ok){const ad=await ar.json();for(const ent of(ad?.entity||[])){const alert=ent?.alert;if(!alert)continue;if((alert.informed_entity||[]).some(ie=>ie?.route_id==='E')){const txt=alert?.header_text?.translation?.[0]?.text;if(txt)alerts.push(txt);}}}}catch(_){}const now=new Date(),h=now.getHours();const rush=(h>=7&&h<=9)||(h>=16&&h<=19);const hw=rush?4+Math.floor(Math.random()*4):7+Math.floor(Math.random()*5);let offset=1+Math.floor(Math.random()*hw);const simTrains=[0,1,2].map(()=>{const t=addMins(now,offset);offset+=hw+Math.floor(Math.random()*3);return{time:t,realtime:false};});return{trains:simTrains,live:false,error:e.message,alerts};}}
-async function fetchWeather(key){const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=40.7957&lon=-74.0040&units=imperial&appid=${key}`);if(!r.ok)throw new Error(`OWM ${r.status}`);const d=await r.json();const id=d.weather?.[0]?.id??800;const desc=d.weather?.[0]?.description??'';const temp=Math.round(d.main?.temp??0);let icon='☀️',impact=0;if(id<300){icon='🌩';impact=15;}else if(id<400){icon='🌦';impact=5;}else if(id<502){icon='🌧';impact=8;}else if(id<600){icon='🌧';impact=15;}else if(id<700){icon='❄️';impact=20;}else if(id<800){icon='🌫';impact=5;}else if(id>800){icon='⛅';impact=0;}return{icon,desc:desc.charAt(0).toUpperCase()+desc.slice(1),temp,impact,live:true};}
-function render(primaryBuses,altBuses,etrain,weather){
-  const wi=weather?.impact||0;
-  if(weather?.live){document.getElementById('weatherIcon').textContent=weather.icon;document.getElementById('weatherTemp').textContent=`${weather.temp}°F`;document.getElementById('weatherText').textContent=weather.impact>0?`${weather.desc} — +${weather.impact} min buffer`:`${weather.desc} — no delay`;document.getElementById('statusWeather').textContent='● Live';document.getElementById('statusWeather').className='api-live';}
-  const pNote=document.getElementById('primaryNote');
-  if(primaryBuses&&primaryBuses.length>0){const next=primaryBuses[0];const pabt=addMins(next.time,BUS_JOURNEY);document.getElementById('bus_next').textContent=`${fmt12(next.time)} (${minsAway(next.time)})`;document.getElementById('bus_route').textContent=next.route;document.getElementById('bus_pabt').textContent=fmt12(pabt);['128','165','166','168'].forEach(r=>{const el=document.getElementById(`badge${r}`);el.className=next.route.includes(r)?'bus-badge active':'bus-badge';});const ma=minsUntil(next.time);if(ma<=2){document.getElementById('tag_primary').textContent='BOARDING';document.getElementById('tag_primary').className='delay-tag red';}else if(ma<=6){document.getElementById('tag_primary').textContent=`${ma} MIN`;document.getElementById('tag_primary').className='delay-tag yellow';}else{document.getElementById('tag_primary').textContent=`${ma} MIN`;document.getElementById('tag_primary').className='delay-tag green';}document.getElementById('primaryTripList').innerHTML=primaryBuses.slice(0,4).map(t=>`<div class="trip-row"><span class="trip-route">${t.route}</span><span class="trip-dest">${t.dest||'PORT AUTHORITY'}</span><span class="trip-time ${minsUntil(t.time)<=5?'very-soon':minsUntil(t.time)<=10?'soon':''}">${fmt12(t.time)} (${minsAway(t.time)})</span></div>`).join('');pNote.textContent='';document.getElementById('statusNjt').textContent='● Live';document.getElementById('statusNjt').className='api-live';}
-  else{document.getElementById('tag_primary').textContent='NO DATA';document.getElementById('tag_primary').className='delay-tag grey';pNote.textContent='Could not load bus data';document.getElementById('statusNjt').textContent='Error';document.getElementById('statusNjt').className='api-pending';}
-  const eNote=document.getElementById('etrainNote');
-  if(etrain.trains&&etrain.trains.length>0){const t1=etrain.trains[0].time,t2=etrain.trains[1]?.time;const officeArrive=addMins(t1,RIDE_MINS+WALK_MINS);document.getElementById('etrain_t1').textContent=`${fmt12(t1)} (${minsAway(t1)})`;document.getElementById('etrain_t2').textContent=t2?`${fmt12(t2)} (${minsAway(t2)})`:'--';document.getElementById('etrain_arrive').textContent=fmt12(officeArrive);const ma=minsUntil(t1);if(ma<=2){document.getElementById('tag_etrain').textContent='BOARDING';document.getElementById('tag_etrain').className='delay-tag red';}else if(ma<=6){document.getElementById('tag_etrain').textContent=`${ma} MIN`;document.getElementById('tag_etrain').className='delay-tag yellow';}else{document.getElementById('tag_etrain').textContent=`${ma} MIN`;document.getElementById('tag_etrain').className='delay-tag green';}eNote.textContent=etrain.live?'':`Estimated (${etrain.error||'live feed unavailable'})`;if(etrain.alerts?.length>0)eNote.innerHTML+=`<br><span style="color:var(--danger)">🚨 ${etrain.alerts[0]}</span>`;document.getElementById('statusMta').textContent=etrain.live?'● Live':'Estimated';document.getElementById('statusMta').className=etrain.live?'api-live':'api-pending';}
-  if(altBuses&&altBuses.length>0){const an=altBuses[0];document.getElementById('alt_next').textContent=`${fmt12(an.time)} (${minsAway(an.time)})`;document.getElementById('alt_route').textContent=an.route;if(primaryBuses&&primaryBuses.length>0){const pp=addMins(primaryBuses[0].time,BUS_JOURNEY);const ap=addMins(an.time,BUS_JOURNEY);const diff=minsUntil(pp)-minsUntil(ap);const av=document.getElementById('alt_vs');const pill=document.getElementById('altPill');const ac=document.getElementById('altCard');const altNote=document.getElementById('altNote');if(diff>=cfg.altThreshold){av.textContent=`${diff} min faster`;av.className='tc-val ok';pill.textContent=`TAKE ALT — ${diff} min faster`;pill.className='adv-pill good';ac.className='alt-card recommended';altNote.innerHTML=`<strong style="color:var(--ok)">Take Ferry Rd bus</strong> — ${diff} min advantage exceeds your ${cfg.altThreshold}-min threshold.`;}else if(diff>0){av.textContent=`${diff} min faster`;av.className='tc-val warn';pill.textContent=`${diff} min faster — below threshold`;pill.className='adv-pill neutral';ac.className='alt-card';altNote.textContent=`Alt is ${diff} min faster but below your ${cfg.altThreshold}-min threshold. Stick to Blvd East.`;}else{av.textContent=diff===0?'Same':`${Math.abs(diff)} min slower`;av.className='tc-val late';pill.textContent=diff===0?'Same speed':`${Math.abs(diff)} min slower`;pill.className='adv-pill bad';ac.className='alt-card';altNote.textContent='Primary route is faster. Stay on Blvd East.';}}}
-  const arrivalDate=timeToday(cfg.arrivalTime);const totalMins=BUS_JOURNEY+RIDE_MINS+WALK_MINS+wi+5;const recDepart=addMins(arrivalDate,-totalMins);const officeArrive=etrain.trains?.[0]?addMins(etrain.trains[0].time,RIDE_MINS+WALK_MINS):null;
-  document.getElementById('recTime').textContent=fmt12(recDepart);document.getElementById('recSub').textContent=`Leave by ${fmt12(recDepart)} → arrive by ${fmt12(arrivalDate)}`;document.getElementById('recWhy').innerHTML=`<strong>Breakdown:</strong> Bus ~${BUS_JOURNEY} min → E train ~${RIDE_MINS} min → walk ${WALK_MINS} min${wi>0?` → weather +${wi} min`:''} + 5 min buffer = <strong>~${totalMins} min total</strong>`;document.getElementById('disp_depart').textContent=fmt12(recDepart);document.getElementById('disp_arrival').textContent=fmt12(arrivalDate);document.getElementById('disp_threshold').textContent=`${cfg.altThreshold} min`;document.getElementById('threshDisp').textContent=cfg.altThreshold;
-  const toDepart=minsUntil(recDepart);const hasAlert=etrain.alerts?.length>0;const slack=officeArrive?minsUntil(arrivalDate)-(RIDE_MINS+WALK_MINS):999;const banner=document.getElementById('statusBanner');
-  if(slack<-5||(hasAlert&&etrain.alerts[0].toLowerCase().includes('suspend'))){banner.className='status-banner danger';document.getElementById('statusIcon').textContent='🚨';document.getElementById('statusLabel').textContent=hasAlert?'E train disruption':'Risk of arriving late';document.getElementById('statusSub').textContent=hasAlert?etrain.alerts[0]:`Est. arrival ${fmt12(officeArrive)} · deadline ${fmt12(arrivalDate)}`;document.getElementById('pulseDot').className='pulse-dot red';}
-  else if(toDepart<20||hasAlert){banner.className='status-banner warn';document.getElementById('statusIcon').textContent='⚠️';document.getElementById('statusLabel').textContent=toDepart<20?`Leave in ${toDepart} min`:'Service alert on your route';document.getElementById('statusSub').textContent=primaryBuses?.[0]?`Next bus: ${primaryBuses[0].route} in ${minsAway(primaryBuses[0].time)} · E train: ${etrain.trains?.[0]?minsAway(etrain.trains[0].time):'--'}`:'Check conditions below';document.getElementById('pulseDot').className='pulse-dot yellow';}
-  else{banner.className='status-banner ok';document.getElementById('statusIcon').textContent='✅';document.getElementById('statusLabel').textContent=`Looking good — depart by ${fmt12(recDepart)}`;document.getElementById('statusSub').textContent=primaryBuses?.[0]?`Next bus: ${primaryBuses[0].route} in ${minsAway(primaryBuses[0].time)} · E train: ${etrain.trains?.[0]?minsAway(etrain.trains[0].time):'--'} · Est. arrival ${fmt12(officeArrive)}`:'All systems go';document.getElementById('pulseDot').className='pulse-dot green';}
-  document.getElementById('lastUpdated').textContent=fmt12(new Date());
+  throw new Error('NJT authentication failed');
 }
-let lastWeather=null;
-async function refreshAll(){const ov=document.getElementById('loadingOverlay');ov.classList.add('show');document.getElementById('loadingMsg').textContent='Fetching live data...';try{async function fetchBlvd(){const r1=await fetchNjtBuses(BLVD_STOP_PRIMARY,['128','165','166','168']);if(r1.length>0)return r1;return fetchNjtBuses(BLVD_STOP_ALT,['128','165','166','168']);}const[pb,ab,et,wt]=await Promise.all([fetchBlvd(),fetchNjtBuses(FERRY_STOP_ID,['156','158','159']),fetchEtrain(),cfg.owKey?fetchWeather(cfg.owKey).catch(()=>lastWeather):Promise.resolve(lastWeather)]);if(wt?.live)lastWeather=wt;render(pb,ab,et,lastWeather||{impact:0});}catch(e){console.error('Refresh error:',e);const et=await fetchEtrain().catch(()=>({trains:[],live:false,alerts:[]}));render(null,null,et,lastWeather||{impact:0});}ov.classList.remove('show');}
-function openSettings(){document.getElementById('inp_arrival').value=cfg.arrivalTime;document.getElementById('inp_threshold').value=cfg.altThreshold;document.getElementById('inp_owkey').value=cfg.owKey;document.getElementById('settingsModal').classList.add('open');}
-function closeSettings(){document.getElementById('settingsModal').classList.remove('open');}
-function saveSettings(){cfg.arrivalTime=document.getElementById('inp_arrival').value;cfg.altThreshold=parseInt(document.getElementById('inp_threshold').value);const k=document.getElementById('inp_owkey').value.trim();if(k){cfg.owKey=k;localStorage.setItem('cg_ow',k);}closeSettings();refreshAll();}
-function saveOWKey(){const k=document.getElementById('owKeyInput').value.trim();if(!k)return;cfg.owKey=k;localStorage.setItem('cg_ow',k);document.getElementById('owKeyInput').value='';document.getElementById('owKeyInput').placeholder='Key saved';refreshAll();}
-if(cfg.owKey)document.getElementById('owKeyInput').placeholder='Key saved';
-refreshAll();
-setInterval(refreshAll,3*60*1000);
-</script>
-</body>
-</html>
+
+async function njtPost(endpoint, fields) {
+  const token = await getToken();
+  const form = new FormData();
+  form.append('token', token);
+  for (const [k, v] of Object.entries(fields)) {
+    form.append(k, v);
+  }
+  const resp = await fetch(`${NJT_BASE}/${endpoint}`, {
+    method: 'POST', body: form
+  });
+  return resp.json();
+}
+
+app.get('/', (req, res) => {
+  res.json({ status: 'CommuteGuard proxy running' });
+});
+
+app.get('/buses/:stop', async (req, res) => {
+  try {
+    const data = await njtPost('getBusDV', {
+      stop: req.params.stop,
+      direction: req.query.direction || '',
+      route: req.query.route || '',
+      IP: ''
+    });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/stops/:route', async (req, res) => {
+  try {
+    const data = await njtPost('getStops', {
+      route: req.params.route,
+      direction: req.query.direction || '',
+      namecontains: req.query.namecontains || ''
+    });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/trips/:route/:location', async (req, res) => {
+  try {
+    const data = await njtPost('getRouteTrips', {
+      route: req.params.route,
+      location: req.params.location
+    });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`CommuteGuard proxy running on port ${PORT}`);
+  setInterval(() => {
+    https.get('https://commuteguard-proxy.onrender.com', (res) => {
+      console.log(`Keep-alive ping: ${res.statusCode}`);
+    }).on('error', (e) => {
+      console.log(`Keep-alive ping failed: ${e.message}`);
+    });
+  }, 10 * 60 * 1000);
+});
