@@ -1,103 +1,247 @@
-const express = require('express');
-const cors = require('cors');
-const fetch = require('node-fetch');
-const FormData = require('form-data');
-const https = require('https');
-
-const app = express();
-app.use(cors({ origin: '*' }));
-app.use(express.json());
-
-const NJT_BASE = 'https://pcsdata.njtransit.com/api/BUSDV2';
-const USERNAME = 'eddie2ooo';
-const PASSWORD = '!sX#Rb@6';
-
-let cachedToken = null;
-let tokenExpiry = null;
-
-async function getToken() {
-  if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
-    return cachedToken;
-  }
-  const form = new FormData();
-  form.append('username', USERNAME);
-  form.append('password', PASSWORD);
-  const resp = await fetch(`${NJT_BASE}/authenticateUser`, {
-    method: 'POST', body: form
-  });
-  const data = await resp.json();
-  if (data.Authenticated === 'True') {
-    cachedToken = data.UserToken;
-    tokenExpiry = Date.now() + 23 * 60 * 60 * 1000;
-    return cachedToken;
-  }
-  throw new Error('NJT authentication failed');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CommuteGuard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0a0c10;--surface:#111318;--border:#1e222c;--accent:#f0c040;--danger:#ff4d4d;--warn:#ff9900;--ok:#4af0a0;--text:#e8eaf0;--muted:#5a6070;--card:#14171f}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'DM Mono',monospace;min-height:100vh;overflow-x:hidden}
+  body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;background-image:linear-gradient(rgba(240,192,64,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(240,192,64,0.03) 1px,transparent 1px);background-size:40px 40px}
+  .container{position:relative;z-index:1;max-width:480px;margin:0 auto;padding:24px 20px 40px}
+  .header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:28px}
+  .logo{font-family:'Syne',sans-serif;font-weight:800;font-size:22px;color:var(--accent)}
+  .logo span{color:var(--text);opacity:.4}
+  .clock{text-align:right;font-size:11px;color:var(--muted);line-height:1.6}
+  .clock .time-big{font-size:20px;font-weight:500;color:var(--text);display:block;font-family:'Syne',sans-serif}
+  .banner{border-radius:12px;padding:18px 20px;margin-bottom:20px;display:flex;align-items:center;gap:14px}
+  .banner.danger{background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.3)}
+  .banner.warn{background:rgba(255,153,0,.1);border:1px solid rgba(255,153,0,.3)}
+  .banner.ok{background:rgba(74,240,160,.08);border:1px solid rgba(74,240,160,.25)}
+  .banner-icon{font-size:28px;flex-shrink:0}
+  .banner-label{font-family:'Syne',sans-serif;font-weight:700;font-size:15px;margin-bottom:3px}
+  .banner.danger .banner-label{color:var(--danger)}
+  .banner.warn .banner-label{color:var(--warn)}
+  .banner.ok .banner-label{color:var(--ok)}
+  .banner-sub{font-size:11px;color:var(--muted);line-height:1.5}
+  .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-left:auto}
+  .dot.red{background:var(--danger);animation:pr 1.5s infinite}
+  .dot.yellow{background:var(--warn);animation:py 1.5s infinite}
+  .dot.green{background:var(--ok)}
+  @keyframes pr{0%,100%{box-shadow:0 0 0 0 rgba(255,77,77,.4)}70%{box-shadow:0 0 0 8px rgba(255,77,77,0)}}
+  @keyframes py{0%,100%{box-shadow:0 0 0 0 rgba(255,153,0,.4)}70%{box-shadow:0 0 0 8px rgba(255,153,0,0)}}
+  .weather{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 16px;display:flex;align-items:center;gap:12px;margin-bottom:20px;font-size:11px;color:var(--muted)}
+  .rec{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:20px}
+  .rec-lbl{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+  .rec-time{font-family:'Syne',sans-serif;font-weight:700;font-size:26px;color:var(--accent);margin-bottom:4px}
+  .rec-sub{font-size:12px;color:var(--muted);line-height:1.6}
+  .rec-why{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.7}
+  .rec-why strong{color:var(--text)}
+  .sec{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px;transition:border-color .2s}
+  .card:hover{border-color:rgba(240,192,64,.3)}
+  .card-top{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+  .bb{background:#1a2030;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:13px;font-weight:500;color:var(--text);font-family:'Syne',sans-serif}
+  .bb.active{border-color:var(--ok);color:var(--ok)}
+  .rname{font-size:11px;color:var(--muted);flex:1;min-width:100px}
+  .tag{font-size:10px;padding:2px 8px;border-radius:20px;font-weight:500;white-space:nowrap}
+  .tag.red{background:rgba(255,77,77,.15);color:var(--danger);border:1px solid rgba(255,77,77,.3)}
+  .tag.yellow{background:rgba(255,153,0,.15);color:var(--warn);border:1px solid rgba(255,153,0,.3)}
+  .tag.green{background:rgba(74,240,160,.1);color:var(--ok);border:1px solid rgba(74,240,160,.25)}
+  .tag.grey{background:rgba(90,96,112,.2);color:var(--muted);border:1px solid var(--border)}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .cell{background:#0f1117;border-radius:8px;padding:8px 10px}
+  .cell-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
+  .cell-val{font-size:13px;font-weight:500;color:var(--text);font-family:'Syne',sans-serif}
+  .cell-val.late{color:var(--danger)}.cell-val.warn{color:var(--warn)}.cell-val.ok{color:var(--ok)}.cell-val.muted{color:var(--muted);font-size:11px}
+  .trips{margin-top:10px}
+  .trow{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11px}
+  .trow:last-child{border-bottom:none}
+  .troute{background:#1a2030;border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:11px;font-family:'Syne',sans-serif;min-width:36px;text-align:center}
+  .tdest{flex:1;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ttime{color:var(--text);font-weight:500;white-space:nowrap}
+  .ttime.soon{color:var(--ok)}.ttime.vsoon{color:var(--warn)}
+  .xfer{display:flex;align-items:center;gap:8px;margin:14px 0 6px;font-size:11px;color:var(--muted)}
+  .xline{flex:1;height:1px;background:var(--border)}
+  .ebadge{background:#0039A6;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-family:'Syne',sans-serif;font-weight:700;flex-shrink:0}
+  .live{display:inline-flex;align-items:center;gap:5px;background:rgba(74,240,160,.08);border:1px solid rgba(74,240,160,.2);border-radius:20px;padding:2px 8px;font-size:10px;color:var(--ok)}
+  .ldot{width:5px;height:5px;border-radius:50%;background:var(--ok);animation:blink 1.5s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+  .note{font-size:10px;color:var(--muted);line-height:1.6;margin-top:8px}
+  .alt{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:10px;transition:border-color .3s}
+  .alt.rec{border-color:rgba(74,240,160,.4);background:rgba(74,240,160,.04)}
+  .alt-hdr{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .pill{border-radius:20px;padding:2px 10px;font-size:10px}
+  .pill.good{background:rgba(74,240,160,.1);color:var(--ok);border:1px solid rgba(74,240,160,.2)}
+  .pill.bad{background:rgba(255,77,77,.1);color:var(--danger);border:1px solid rgba(255,77,77,.2)}
+  .pill.neutral{background:rgba(90,96,112,.2);color:var(--muted);border:1px solid var(--border)}
+  .scard{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-top:20px}
+  .srow{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px}
+  .srow:last-child{border-bottom:none}
+  .slbl{color:var(--muted)}.sval{color:var(--text);font-weight:500}
+  .sval.ed{color:var(--accent);cursor:pointer;border-bottom:1px dashed rgba(240,192,64,.4)}
+  .arow{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:11px}
+  .arow:last-child{border-bottom:none}
+  .alive{color:var(--ok)}.apend{color:var(--warn)}
+  .krow{display:flex;gap:8px;margin-top:10px}
+  .kinput{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;outline:none}
+  .kinput:focus{border-color:rgba(240,192,64,.4)}.kinput::placeholder{color:var(--muted)}
+  .kbtn{padding:8px 14px;background:rgba(240,192,64,.1);border:1px solid rgba(240,192,64,.3);border-radius:8px;color:var(--accent);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer}
+  .rbtn{width:100%;margin-top:20px;padding:14px;background:transparent;border:1px solid rgba(240,192,64,.4);border-radius:10px;color:var(--accent);font-family:'DM Mono',monospace;font-size:12px;letter-spacing:1px;cursor:pointer;transition:all .2s}
+  .rbtn:hover{background:rgba(240,192,64,.08);border-color:var(--accent)}
+  .footer{text-align:center;font-size:10px;color:var(--muted);margin-top:24px;line-height:1.8}
+  .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center;padding:20px}
+  .modal-bg.open{display:flex}
+  .modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:380px;max-height:90vh;overflow-y:auto}
+  .modal h3{font-family:'Syne',sans-serif;font-size:16px;color:var(--accent);margin-bottom:16px}
+  .modal label{display:block;font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin:14px 0 6px}
+  .modal input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px 12px;font-family:'DM Mono',monospace;font-size:13px;outline:none}
+  .modal input:focus{border-color:rgba(240,192,64,.4)}
+  .mbtns{display:flex;gap:10px;margin-top:20px}
+  .bsave{flex:1;padding:12px;background:var(--accent);color:#000;border:none;border-radius:8px;font-family:'Syne',sans-serif;font-weight:700;font-size:13px;cursor:pointer}
+  .bcancel{padding:12px 16px;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;font-family:'DM Mono',monospace;font-size:12px;cursor:pointer}
+  .loader{display:none;position:fixed;inset:0;background:rgba(10,12,16,.88);z-index:200;align-items:center;justify-content:center;flex-direction:column;gap:14px;font-size:12px;color:var(--muted)}
+  .loader.show{display:flex}
+  .spin{font-size:32px;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="loader" id="loader"><div class="spin">&#8635;</div><div id="lmsg">Fetching live data...</div></div>
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <h3>Preferences</h3>
+    <label>Arrival deadline</label><input type="time" id="inp_arr" value="08:45">
+    <label>Alt route threshold (mins)</label><input type="number" id="inp_thr" value="20" min="5" max="60">
+    <label>OpenWeather API key</label><input type="text" id="inp_ow" placeholder="Paste key here">
+    <div class="mbtns"><button class="bcancel" onclick="closeM()">Cancel</button><button class="bsave" onclick="saveM()">Save</button></div>
+  </div>
+</div>
+<div class="container">
+  <div class="header">
+    <div>
+      <div class="logo">Commute<span>Guard</span></div>
+      <div style="font-size:10px;color:var(--muted);margin-top:3px">7000 Kennedy Blvd E &rarr; 55 E 52nd St</div>
+    </div>
+    <div class="clock"><span class="time-big" id="clk">--:--</span><span id="clkd"></span></div>
+  </div>
+  <div class="banner warn" id="banner">
+    <div class="banner-icon" id="bicon">&#8635;</div>
+    <div><div class="banner-label" id="blbl">Loading...</div><div class="banner-sub" id="bsub">Connecting to feeds</div></div>
+    <div class="dot yellow" id="bdot"></div>
+  </div>
+  <div class="weather">
+    <div id="wicon" style="font-size:18px">&#127780;</div>
+    <div id="wtxt" style="flex:1;line-height:1.5"><span style="color:var(--warn)">Add OpenWeather key for live weather</span></div>
+    <div id="wtemp" style="font-family:'Syne',sans-serif;font-size:16px;color:var(--text)">--F</div>
+  </div>
+  <div class="rec">
+    <div class="rec-lbl">Recommended Departure</div>
+    <div class="rec-time" id="rtime">--:--</div>
+    <div class="rec-sub" id="rsub">Calculating...</div>
+    <div class="rec-why" id="rwhy"></div>
+  </div>
+  <div class="sec"><span>Primary - Blvd East Buses</span><span class="live"><span class="ldot"></span>LIVE</span></div>
+  <div class="card">
+    <div class="card-top">
+      <span class="bb" id="b128">128</span><span class="bb" id="b165">165</span><span class="bb" id="b166">166</span><span class="bb" id="b168">168</span>
+      <span class="rname">Blvd East @ 69th &rarr; Port Authority</span>
+      <span class="tag grey" id="ptag">LOADING</span>
+    </div>
+    <div class="grid3">
+      <div class="cell"><div class="cell-lbl">Next bus</div><div class="cell-val" id="pnext">--:--</div></div>
+      <div class="cell"><div class="cell-lbl">Route</div><div class="cell-val" id="proute">--</div></div>
+      <div class="cell"><div class="cell-lbl">PABT arrive</div><div class="cell-val" id="ppabt">--:--</div></div>
+    </div>
+    <div class="trips" id="ptrips"></div>
+    <div class="note" id="pnote"></div>
+  </div>
+  <div class="xfer"><div class="xline"></div><div class="ebadge">E</div><div style="font-size:11px;color:var(--muted)">Transfer at Port Authority &rarr; E train &rarr; 5th Ave/53rd St</div><div class="xline"></div></div>
+  <div class="sec" style="margin-top:14px"><span>E Train - Port Auth &rarr; 5th/53rd</span><span class="live"><span class="ldot"></span>LIVE</span></div>
+  <div class="card">
+    <div class="card-top">
+      <div class="ebadge" style="width:28px;height:28px;font-size:14px">E</div>
+      <span class="rname">42nd St-Port Authority &rarr; 5th Ave/53rd St - 12 min - 4 min walk</span>
+      <span class="tag grey" id="etag">LOADING</span>
+    </div>
+    <div class="grid3">
+      <div class="cell"><div class="cell-lbl">Next E train</div><div class="cell-val" id="et1">--:--</div></div>
+      <div class="cell"><div class="cell-lbl">Following</div><div class="cell-val" id="et2">--:--</div></div>
+      <div class="cell"><div class="cell-lbl">Office arrive</div><div class="cell-val" id="earr">--:--</div></div>
+    </div>
+    <div class="note" id="enote"></div>
+  </div>
+  <div class="sec" style="margin-top:16px"><span>Alt - Ferry Rd Buses (156/158/159)</span><span class="live"><span class="ldot"></span>LIVE</span></div>
+  <div class="alt" id="altcard">
+    <div class="alt-hdr">
+      <span class="bb" id="b156">156</span><span class="bb" id="b158">158</span><span class="bb" id="b159">159</span>
+      <span style="font-size:11px;color:var(--muted);flex:1">River Rd / Ferry Rd &rarr; Port Authority</span>
+      <span class="pill neutral" id="apill">loading...</span>
+    </div>
+    <div class="grid3">
+      <div class="cell"><div class="cell-lbl">Next bus</div><div class="cell-val" id="anext">--:--</div></div>
+      <div class="cell"><div class="cell-lbl">Route</div><div class="cell-val" id="aroute">--</div></div>
+      <div class="cell"><div class="cell-lbl">vs Primary</div><div class="cell-val" id="avs">--</div></div>
+    </div>
+    <div class="note" id="anote">Only recommended if it saves 20+ min vs primary.</div>
+  </div>
+  <div class="scard">
+    <div class="sec" style="margin-bottom:10px">Settings and API Status</div>
+    <div class="srow"><span class="slbl">Arrival deadline</span><span class="sval ed" id="darr" onclick="openM()">8:45 AM</span></div>
+    <div class="srow"><span class="slbl">Depart by</span><span class="sval" id="ddep">--</span></div>
+    <div class="srow"><span class="slbl">Alt threshold</span><span class="sval ed" id="dthr" onclick="openM()">20 min</span></div>
+    <div style="margin-top:14px;margin-bottom:8px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted)">Data Sources</div>
+    <div class="arow"><span style="color:var(--muted)">NJ Transit buses</span><span id="snjt" class="apend">Connecting...</span></div>
+    <div class="arow"><span style="color:var(--muted)">MTA E train</span><span id="smta" class="apend">Connecting...</span></div>
+    <div class="arow"><span style="color:var(--muted)">Weather</span><span id="swx" class="apend">Key needed</span></div>
+    <div style="margin-top:14px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">OpenWeather Key</div>
+    <div class="krow"><input class="kinput" type="text" id="owk" placeholder="Paste key..."><button class="kbtn" onclick="saveOW()">Save</button></div>
+  </div>
+  <button class="rbtn" onclick="refresh()">&#8635; REFRESH LIVE DATA</button>
+  <div class="footer">NJ Transit BUSDATA - MTA GTFS-RT - Auto-refresh 3 min<br>Last updated: <span id="lupd">--</span></div>
+</div>
+<script>
+const PROXY='https://commuteguard-proxy.onrender.com';
+const RIDE=12,WALK=4,BUS=22;
+const BS1='20452',BS2='20456',FS='20451';
+let cfg={arr:'08:45',thr:20,ow:localStorage.getItem('cg_ow')||''};
+function clk(){const n=new Date();document.getElementById('clk').textContent=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');const D=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];document.getElementById('clkd').textContent=D[n.getDay()]+' '+M[n.getMonth()]+' '+n.getDate();}
+setInterval(clk,1000);clk();
+const am=(d,m)=>new Date(d.getTime()+m*60000);
+function f12(d){if(!d)return'--:--';const h=d.getHours(),m=d.getMinutes();return(h%12||12)+':'+String(m).padStart(2,'0')+' '+(h>=12?'PM':'AM');}
+function ma(d){const v=Math.round((d-new Date())/60000);return v<=0?'Now':v===1?'1 min':v+' min';}
+function mu(d){return Math.round((d-new Date())/60000);}
+function td(s){const[h,m]=s.split(':').map(Number);const d=new Date();d.setHours(h,m,0,0);return d;}
+function pnt(s){if(!s)return null;s=s.trim();const im=s.match(/in\s+(\d+)\s*min/i);if(im)return am(new Date(),parseInt(im[1]));if(/^now$/i.test(s))return new Date();const tm=s.match(/(\d+):(\d+)\s*(AM|PM)/i);if(tm){let h=parseInt(tm[1]),m=parseInt(tm[2]);const ap=tm[3].toUpperCase();if(ap==='PM'&&h!==12)h+=12;if(ap==='AM'&&h===12)h=0;const d=new Date();d.setHours(h,m,0,0);if(d<new Date())d.setDate(d.getDate()+1);return d;}return null;}
+async function getNjtBuses(stop,routes){const r=await fetch(PROXY+'/buses/'+stop);if(!r.ok)throw new Error('Proxy '+r.status);const d=await r.json();if(d.error)throw new Error(d.error);const trips=(d.DVTrip||[]).filter(t=>routes.includes(String(t.public_route).replace(/\D/g,''))).map(t=>({route:t.public_route,dest:(t.header||'').trim(),time:pnt(t.departuretime)})).filter(t=>t.time);trips.sort((a,b)=>a.time-b.time);return trips;}
+async function getEtrain(){try{const r=await fetch('https://otp-mta-prod.camsys-apps.com/otp/routers/default/index/stops/MTASBWY:A27/stoptimes?omitNonPickups=true',{headers:{Accept:'application/json'}});if(!r.ok)throw new Error('OTP '+r.status);const data=await r.json();const trains=[];const now=new Date();const mid=new Date(now);mid.setHours(0,0,0,0);for(const p of(Array.isArray(data)?data:[])){if(!(p?.pattern?.route?.id||'').includes(':E'))continue;if(p?.pattern?.directionId!==0)continue;for(const s of(p.times||[])){const sec=s.realtimeDeparture??s.scheduledDeparture;if(sec==null)continue;const dep=new Date(mid.getTime()+sec*1000);if(dep>now)trains.push({time:dep,rt:s.realtimeDeparture!=null});}}trains.sort((a,b)=>a.time-b.time);if(trains.length)return{trains:trains.slice(0,3),live:true,alerts:[]};throw new Error('No trains');}catch(e){const alerts=[];try{const ar=await fetch('https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/camsys%2Fsubway-alerts.json',{headers:{Accept:'application/json'}});if(ar.ok){const ad=await ar.json();for(const ent of(ad?.entity||[])){const al=ent?.alert;if(!al)continue;if((al.informed_entity||[]).some(ie=>ie?.route_id==='E')){const t=al?.header_text?.translation?.[0]?.text;if(t)alerts.push(t);}}}}catch(_){}const now=new Date(),h=now.getHours();const rush=(h>=7&&h<=9)||(h>=16&&h<=19);const hw=rush?4+Math.floor(Math.random()*4):7+Math.floor(Math.random()*5);let off=1+Math.floor(Math.random()*hw);return{trains:[0,1,2].map(()=>{const t=am(now,off);off+=hw+Math.floor(Math.random()*3);return{time:t,rt:false};}),live:false,error:e.message,alerts};}}
+async function getWx(k){const r=await fetch('https://api.openweathermap.org/data/2.5/weather?lat=40.7957&lon=-74.0040&units=imperial&appid='+k);if(!r.ok)throw new Error('OWM '+r.status);const d=await r.json();const id=d.weather?.[0]?.id??800;const desc=d.weather?.[0]?.description??'';const temp=Math.round(d.main?.temp??0);let icon='sunny',impact=0;if(id<300){icon='storm';impact=15;}else if(id<400){icon='drizzle';impact=5;}else if(id<502){icon='rain';impact=8;}else if(id<600){icon='rain';impact=15;}else if(id<700){icon='snow';impact=20;}else if(id<800){icon='fog';impact=5;}return{desc:desc.charAt(0).toUpperCase()+desc.slice(1),temp,impact,live:true};}
+function render(pb,ab,et,wx){
+  const wi=wx?.impact||0;
+  if(wx?.live){document.getElementById('wtxt').textContent=wx.desc+(wx.impact>0?' - +'+wx.impact+' min buffer':' - no delay');document.getElementById('wtemp').textContent=wx.temp+'F';document.getElementById('swx').textContent='Live';document.getElementById('swx').className='alive';}
+  if(pb&&pb.length){const nx=pb[0];const pabt=am(nx.time,BUS);document.getElementById('pnext').textContent=f12(nx.time)+' ('+ma(nx.time)+')';document.getElementById('proute').textContent=nx.route;document.getElementById('ppabt').textContent=f12(pabt);['128','165','166','168'].forEach(r=>{document.getElementById('b'+r).className=nx.route.includes(r)?'bb active':'bb';});const mv=mu(nx.time);if(mv<=2){document.getElementById('ptag').textContent='BOARDING';document.getElementById('ptag').className='tag red';}else if(mv<=6){document.getElementById('ptag').textContent=mv+' MIN';document.getElementById('ptag').className='tag yellow';}else{document.getElementById('ptag').textContent=mv+' MIN';document.getElementById('ptag').className='tag green';}document.getElementById('ptrips').innerHTML=pb.slice(0,4).map(t=>'<div class="trow"><span class="troute">'+t.route+'</span><span class="tdest">'+(t.dest||'PORT AUTHORITY')+'</span><span class="ttime '+(mu(t.time)<=5?'vsoon':mu(t.time)<=10?'soon':[])+'">'+f12(t.time)+' ('+ma(t.time)+')</span></div>').join('');document.getElementById('pnote').textContent='';document.getElementById('snjt').textContent='Live';document.getElementById('snjt').className='alive';}
+  else{document.getElementById('ptag').textContent='NO DATA';document.getElementById('ptag').className='tag grey';document.getElementById('pnote').textContent='Could not load bus data';document.getElementById('snjt').textContent='Error';document.getElementById('snjt').className='apend';}
+  if(et.trains&&et.trains.length){const t1=et.trains[0].time,t2=et.trains[1]?.time;const oa=am(t1,RIDE+WALK);document.getElementById('et1').textContent=f12(t1)+' ('+ma(t1)+')';document.getElementById('et2').textContent=t2?f12(t2)+' ('+ma(t2)+')':'--';document.getElementById('earr').textContent=f12(oa);const mv=mu(t1);if(mv<=2){document.getElementById('etag').textContent='BOARDING';document.getElementById('etag').className='tag red';}else if(mv<=6){document.getElementById('etag').textContent=mv+' MIN';document.getElementById('etag').className='tag yellow';}else{document.getElementById('etag').textContent=mv+' MIN';document.getElementById('etag').className='tag green';}document.getElementById('enote').textContent=et.live?'':'Estimated ('+( et.error||'live unavailable')+')';if(et.alerts?.length)document.getElementById('enote').innerHTML+='<br><span style="color:var(--danger)">Alert: '+et.alerts[0]+'</span>';document.getElementById('smta').textContent=et.live?'Live':'Estimated';document.getElementById('smta').className=et.live?'alive':'apend';}
+  if(ab&&ab.length){const an=ab[0];document.getElementById('anext').textContent=f12(an.time)+' ('+ma(an.time)+')';document.getElementById('aroute').textContent=an.route;if(pb&&pb.length){const diff=mu(am(pb[0].time,BUS))-mu(am(an.time,BUS));document.getElementById('avs').textContent=diff>0?diff+' min faster':diff===0?'Same':Math.abs(diff)+' min slower';document.getElementById('avs').className='cell-val '+(diff>=cfg.thr?'ok':diff<0?'late':'warn');const pill=document.getElementById('apill');const ac=document.getElementById('altcard');const an2=document.getElementById('anote');if(diff>=cfg.thr){pill.textContent='TAKE ALT - '+diff+' min faster';pill.className='pill good';ac.className='alt rec';an2.innerHTML='<strong style="color:var(--ok)">Take Ferry Rd bus</strong> - '+diff+' min advantage meets your '+cfg.thr+' min threshold.';}else if(diff>0){pill.textContent=diff+' min faster - below threshold';pill.className='pill neutral';ac.className='alt';an2.textContent='Alt is '+diff+' min faster but below your '+cfg.thr+' min threshold. Stick to Blvd East.';}else{pill.textContent=diff===0?'Same speed':Math.abs(diff)+' min slower';pill.className='pill bad';ac.className='alt';an2.textContent='Primary is faster. Stay on Blvd East.';}}}
+  const ad=td(cfg.arr);const tot=BUS+RIDE+WALK+wi+5;const rd=am(ad,-tot);const oa=et.trains?.[0]?am(et.trains[0].time,RIDE+WALK):null;
+  document.getElementById('rtime').textContent=f12(rd);document.getElementById('rsub').textContent='Leave by '+f12(rd)+' - arrive by '+f12(ad);document.getElementById('rwhy').innerHTML='<strong>Breakdown:</strong> Bus ~'+BUS+' min - E train ~'+RIDE+' min - walk '+WALK+' min'+(wi>0?' - weather +'+wi+' min':'')+' + 5 min buffer = <strong>~'+tot+' min total</strong>';document.getElementById('ddep').textContent=f12(rd);document.getElementById('darr').textContent=f12(ad);document.getElementById('dthr').textContent=cfg.thr+' min';
+  const tod=mu(rd);const ha=et.alerts?.length>0;const slack=oa?mu(ad)-(RIDE+WALK):999;const bn=document.getElementById('banner');
+  if(slack<-5||(ha&&et.alerts[0].toLowerCase().includes('suspend'))){bn.className='banner danger';document.getElementById('bicon').textContent='🚨';document.getElementById('blbl').textContent=ha?'E train disruption':'Risk of arriving late';document.getElementById('bsub').textContent=ha?et.alerts[0]:'Est. arrival '+f12(oa)+' - deadline '+f12(ad);document.getElementById('bdot').className='dot red';}
+  else if(tod<20||ha){bn.className='banner warn';document.getElementById('bicon').textContent='⚠️';document.getElementById('blbl').textContent=tod<20?'Leave in '+tod+' min':'Service alert on route';document.getElementById('bsub').textContent=pb?.[0]?'Next bus: '+pb[0].route+' in '+ma(pb[0].time)+' - E train: '+(et.trains?.[0]?ma(et.trains[0].time):'--'):'Check below';document.getElementById('bdot').className='dot yellow';}
+  else{bn.className='banner ok';document.getElementById('bicon').textContent='✅';document.getElementById('blbl').textContent='Looking good - depart by '+f12(rd);document.getElementById('bsub').textContent=pb?.[0]?'Next bus: '+pb[0].route+' in '+ma(pb[0].time)+' - E train: '+(et.trains?.[0]?ma(et.trains[0].time):'--')+' - Est. arrival '+f12(oa):'All clear';document.getElementById('bdot').className='dot green';}
+  document.getElementById('lupd').textContent=f12(new Date());
 }
-
-async function njtPost(endpoint, fields) {
-  const token = await getToken();
-  const form = new FormData();
-  form.append('token', token);
-  for (const [k, v] of Object.entries(fields)) {
-    form.append(k, v);
-  }
-  const resp = await fetch(`${NJT_BASE}/${endpoint}`, {
-    method: 'POST', body: form
-  });
-  return resp.json();
-}
-
-app.get('/', (req, res) => {
-  res.json({ status: 'CommuteGuard proxy running' });
-});
-
-app.get('/buses/:stop', async (req, res) => {
-  try {
-    const data = await njtPost('getBusDV', {
-      stop: req.params.stop,
-      direction: req.query.direction || '',
-      route: req.query.route || '',
-      IP: ''
-    });
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/stops/:route', async (req, res) => {
-  try {
-    const data = await njtPost('getStops', {
-      route: req.params.route,
-      direction: req.query.direction || '',
-      namecontains: req.query.namecontains || ''
-    });
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/trips/:route/:location', async (req, res) => {
-  try {
-    const data = await njtPost('getRouteTrips', {
-      route: req.params.route,
-      location: req.params.location
-    });
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`CommuteGuard proxy running on port ${PORT}`);
-  setInterval(() => {
-    https.get('https://commuteguard-proxy.onrender.com', (res) => {
-      console.log(`Keep-alive ping: ${res.statusCode}`);
-    }).on('error', (e) => {
-      console.log(`Keep-alive ping failed: ${e.message}`);
-    });
-  }, 10 * 60 * 1000);
-});
+let lastWx=null;
+async function refresh(){const ld=document.getElementById('loader');ld.classList.add('show');document.getElementById('lmsg').textContent='Fetching live data...';try{async function getBlvd(){const r1=await getNjtBuses(BS1,['128','165','166','168']);if(r1.length)return r1;return getNjtBuses(BS2,['128','165','166','168']);}const[pb,ab,et,wx]=await Promise.all([getBlvd(),getNjtBuses(FS,['156','158','159']),getEtrain(),cfg.ow?getWx(cfg.ow).catch(()=>lastWx):Promise.resolve(lastWx)]);if(wx?.live)lastWx=wx;render(pb,ab,et,lastWx||{impact:0});}catch(e){console.error(e);const et=await getEtrain().catch(()=>({trains:[],live:false,alerts:[]}));render(null,null,et,lastWx||{impact:0});}ld.classList.remove('show');}
+function openM(){document.getElementById('inp_arr').value=cfg.arr;document.getElementById('inp_thr').value=cfg.thr;document.getElementById('inp_ow').value=cfg.ow;document.getElementById('modal').classList.add('open');}
+function closeM(){document.getElementById('modal').classList.remove('open');}
+function saveM(){cfg.arr=document.getElementById('inp_arr').value;cfg.thr=parseInt(document.getElementById('inp_thr').value);const k=document.getElementById('inp_ow').value.trim();if(k){cfg.ow=k;localStorage.setItem('cg_ow',k);}closeM();refresh();}
+function saveOW(){const k=document.getElementById('owk').value.trim();if(!k)return;cfg.ow=k;localStorage.setItem('cg_ow',k);document.getElementById('owk').value='';document.getElementById('owk').placeholder='Key saved';refresh();}
+if(cfg.ow)document.getElementById('owk').placeholder='Key saved';
+refresh();
+setInterval(refresh,3*60*1000);
+</script>
+</body>
+</html>
