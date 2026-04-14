@@ -1,11 +1,11 @@
-const express = require('express');
+ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 const FormData = require('form-data');
 const https = require('https');
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 const NJT_BASE = 'https://pcsdata.njtransit.com/api/BUSDV2';
@@ -15,7 +15,6 @@ const PASSWORD = '!sX#Rb@6';
 let cachedToken = null;
 let tokenExpiry = null;
 
-// Get or refresh auth token
 async function getToken() {
   if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
     return cachedToken;
@@ -35,7 +34,6 @@ async function getToken() {
   throw new Error('NJT authentication failed');
 }
 
-// Helper to call NJT API
 async function njtPost(endpoint, fields) {
   const token = await getToken();
   const form = new FormData();
@@ -49,12 +47,10 @@ async function njtPost(endpoint, fields) {
   return resp.json();
 }
 
-// Health check
 app.get('/', (req, res) => {
   res.json({ status: 'CommuteGuard proxy running' });
 });
 
-// Get next buses at a stop
 app.get('/buses/:stop', async (req, res) => {
   try {
     const data = await njtPost('getBusDV', {
@@ -69,7 +65,6 @@ app.get('/buses/:stop', async (req, res) => {
   }
 });
 
-// Get stops for a route
 app.get('/stops/:route', async (req, res) => {
   try {
     const data = await njtPost('getStops', {
@@ -83,7 +78,6 @@ app.get('/stops/:route', async (req, res) => {
   }
 });
 
-// Get route trips at a location
 app.get('/trips/:route/:location', async (req, res) => {
   try {
     const data = await njtPost('getRouteTrips', {
@@ -99,8 +93,6 @@ app.get('/trips/:route/:location', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`CommuteGuard proxy running on port ${PORT}`);
-
-  // Keep-alive ping every 10 minutes to prevent Render free tier sleep
   setInterval(() => {
     https.get('https://commuteguard-proxy.onrender.com', (res) => {
       console.log(`Keep-alive ping: ${res.statusCode}`);
