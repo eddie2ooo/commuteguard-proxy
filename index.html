@@ -213,27 +213,12 @@
 </div>
 <script>
 const PROXY='https://commuteguard-proxy.onrender.com';
-
-// Calibrated Apr 14 2026
-const WALK_TO_STOP=4;
-const BUS_BASE=33;
-const BUS_HEAVY=28;
-const BUS_EMPTY=38;
-const WALK_TO_ETRAIN=5;
-const ETRAIN_RIDE=5;
-const WALK_TO_OFFICE=5;
+const WALK_TO_STOP=4,BUS_BASE=33,BUS_HEAVY=28,BUS_EMPTY=38,WALK_TO_ETRAIN=5,ETRAIN_RIDE=5,WALK_TO_OFFICE=5;
 const BS1='20452',BS2='20456',FS='20451';
-
 let cfg={arr:'08:45',thr:20,ow:localStorage.getItem('cg_ow')||''};
-let lastGoodBuses=null,lastGoodAlt=null,lastGoodEtrain=null;
-let lastGoodTimestamp=null;
+let lastGoodBuses=null,lastGoodAlt=null,lastGoodTimestamp=null,lastWx=null;
 
-function clk(){
-  const n=new Date();
-  document.getElementById('clk').textContent=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
-  const D=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  document.getElementById('clkd').textContent=D[n.getDay()]+' '+M[n.getMonth()]+' '+n.getDate();
-}
+function clk(){const n=new Date();document.getElementById('clk').textContent=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');const D=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];document.getElementById('clkd').textContent=D[n.getDay()]+' '+M[n.getMonth()]+' '+n.getDate();}
 setInterval(clk,1000);clk();
 
 const am=(d,m)=>new Date(d.getTime()+m*60000);
@@ -258,23 +243,12 @@ function normalizeLoad(s){
   if(s.includes('EMPTY'))return'EMPTY';return'UNKNOWN';
 }
 
-function busJourney(load){
-  if(load==='HEAVY')return BUS_HEAVY;
-  if(load==='EMPTY')return BUS_EMPTY;
-  return BUS_BASE;
-}
+function busJourney(load){if(load==='HEAVY')return BUS_HEAVY;if(load==='EMPTY')return BUS_EMPTY;return BUS_BASE;}
+function loadClass(load){if(load==='FULL')return'late';if(load==='HEAVY'||load==='MEDIUM')return'warn';if(load==='LIGHT')return'ok';return'muted';}
 
-function loadClass(load){
-  if(load==='FULL')return'late';if(load==='HEAVY'||load==='MEDIUM')return'warn';
-  if(load==='LIGHT')return'ok';return'muted';
-}
-
-// Fetch with 10s timeout
-function fetchT(url,opts={},ms=10000){
-  return Promise.race([
-    fetch(url,opts),
-    new Promise((_,reject)=>setTimeout(()=>reject(new Error('Timeout after '+ms+'ms')),ms))
-  ]);
+function fetchT(url,opts,ms){
+  opts=opts||{};ms=ms||10000;
+  return Promise.race([fetch(url,opts),new Promise(function(_,reject){setTimeout(function(){reject(new Error('Timeout'));},ms);})]);
 }
 
 async function getNjtBuses(stop,routes){
@@ -283,18 +257,21 @@ async function getNjtBuses(stop,routes){
   const d=await r.json();
   if(d.error)throw new Error(d.error);
   const cached=d._cached||false;
-  const trips=(d.DVTrip||[])
-    .filter(t=>routes.includes(String(t.public_route).replace(/\D/g,'')))
-    .map(t=>({route:t.public_route,dest:(t.header||'').trim(),time:pnt(t.departuretime),load:normalizeLoad(t.passload),cached}))
-    .filter(t=>t.time);
-  trips.sort((a,b)=>a.time-b.time);
+  const trips=(d.DVTrip||[]).filter(function(t){return routes.includes(String(t.public_route).replace(/\D/g,''));}).map(function(t){return{route:t.public_route,dest:(t.header||'').trim(),time:pnt(t.departuretime),load:normalizeLoad(t.passload),cached:cached};}).filter(function(t){return t.time;});
+  trips.sort(function(a,b){return a.time-b.time;});
   return trips;
 }
 
+async function getBlvd(){
+  const r1=await getNjtBuses(BS1,['128','165','166','168']);
+  if(r1.length)return r1;
+  return getNjtBuses(BS2,['128','165','166','168']);
+}
+
 function findBoardable(trips){
-  let skipped=0;
-  for(const t of trips){if(t.load==='FULL'){skipped++;continue;}return{bus:t,skipped};}
-  return{bus:trips[0]||null,skipped};
+  var skipped=0;
+  for(var i=0;i<trips.length;i++){if(trips[i].load==='FULL'){skipped++;continue;}return{bus:trips[i],skipped:skipped};}
+  return{bus:trips[0]||null,skipped:skipped};
 }
 
 async function getEtrain(){
@@ -303,102 +280,78 @@ async function getEtrain(){
     if(!r.ok)throw new Error('OTP '+r.status);
     const data=await r.json();
     const trains=[];const now=new Date();const mid=new Date(now);mid.setHours(0,0,0,0);
-    for(const p of(Array.isArray(data)?data:[])){
-      if(!(p?.pattern?.route?.id||'').includes(':E'))continue;
-      if(p?.pattern?.directionId!==0)continue;
-      for(const s of(p.times||[])){
-        const sec=s.realtimeDeparture??s.scheduledDeparture;if(sec==null)continue;
-        const dep=new Date(mid.getTime()+sec*1000);if(dep>now)trains.push({time:dep,rt:s.realtimeDeparture!=null});
+    for(var i=0;i<(Array.isArray(data)?data:[]).length;i++){
+      const p=data[i];
+      if(!(p&&p.pattern&&p.pattern.route&&p.pattern.route.id||'').includes(':E'))continue;
+      if(!p.pattern||p.pattern.directionId!==0)continue;
+      const times=p.times||[];
+      for(var j=0;j<times.length;j++){
+        const s=times[j];const sec=s.realtimeDeparture!=null?s.realtimeDeparture:s.scheduledDeparture;
+        if(sec==null)continue;const dep=new Date(mid.getTime()+sec*1000);if(dep>now)trains.push({time:dep,rt:s.realtimeDeparture!=null});
       }
     }
-    trains.sort((a,b)=>a.time-b.time);
+    trains.sort(function(a,b){return a.time-b.time;});
     if(trains.length)return{trains:trains.slice(0,3),live:true,alerts:[]};
     throw new Error('No trains');
   }catch(e){
     const alerts=[];
     try{
       const ar=await fetchT('https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/camsys%2Fsubway-alerts.json',{headers:{Accept:'application/json'}});
-      if(ar.ok){const ad=await ar.json();for(const ent of(ad?.entity||[])){const al=ent?.alert;if(!al)continue;if((al.informed_entity||[]).some(ie=>ie?.route_id==='E')){const t=al?.header_text?.translation?.[0]?.text;if(t)alerts.push(t);}}}
-    }catch(_){}
-    const now=new Date(),h=now.getHours();const rush=(h>=7&&h<=9)||(h>=16&&h<=19);
-    const hw=rush?4+Math.floor(Math.random()*4):7+Math.floor(Math.random()*5);let off=1+Math.floor(Math.random()*hw);
-    return{trains:[0,1,2].map(()=>{const t=am(now,off);off+=hw+Math.floor(Math.random()*3);return{time:t,rt:false};}),live:false,error:e.message,alerts};
+      if(ar.ok){const ad=await ar.json();const ents=ad&&ad.entity?ad.entity:[];for(var i=0;i<ents.length;i++){const al=ents[i]&&ents[i].alert;if(!al)continue;const ie=al.informed_entity||[];for(var j=0;j<ie.length;j++){if(ie[j]&&ie[j].route_id==='E'){const t=al&&al.header_text&&al.header_text.translation&&al.header_text.translation[0]&&al.header_text.translation[0].text;if(t)alerts.push(t);break;}}}}
+    }catch(x){}
+    const now=new Date();const h=now.getHours();const rush=(h>=7&&h<=9)||(h>=16&&h<=19);
+    const hw=rush?4+Math.floor(Math.random()*4):7+Math.floor(Math.random()*5);var off=1+Math.floor(Math.random()*hw);
+    const sim=[];for(var i=0;i<3;i++){sim.push({time:am(now,off),rt:false});off+=hw+Math.floor(Math.random()*3);}
+    return{trains:sim,live:false,error:e.message,alerts:alerts};
   }
 }
 
 async function getWx(k){
   const r=await fetchT('https://api.openweathermap.org/data/2.5/weather?lat=40.7957&lon=-74.0040&units=imperial&appid='+k);
   if(!r.ok)throw new Error('OWM '+r.status);
-  const d=await r.json();const id=d.weather?.[0]?.id??800;
-  const desc=d.weather?.[0]?.description??'';const temp=Math.round(d.main?.temp??0);
-  let impact=0;
+  const d=await r.json();const id=d.weather&&d.weather[0]?d.weather[0].id:800;
+  const desc=d.weather&&d.weather[0]?d.weather[0].description:'';const temp=Math.round(d.main&&d.main.temp?d.main.temp:0);
+  var impact=0;
   if(id<300)impact=15;else if(id<400)impact=5;else if(id<502)impact=8;else if(id<600)impact=15;else if(id<700)impact=20;else if(id<800)impact=5;
-  return{desc:desc.charAt(0).toUpperCase()+desc.slice(1),temp,impact,live:true};
+  return{desc:desc.charAt(0).toUpperCase()+desc.slice(1),temp:temp,impact:impact,live:true};
 }
 
 function render(pb,ab,et,wx,isStale,staleAge){
-  const wi=wx?.impact||0;
-
-  // Stale bar
+  const wi=wx&&wx.impact?wx.impact:0;
   const sb=document.getElementById('stalebar');
   if(isStale){sb.classList.add('show');document.getElementById('staleage').textContent=staleAge;}
   else{sb.classList.remove('show');}
-
-  // Weather
-  if(wx?.live){
-    document.getElementById('wtxt').textContent=wx.desc+(wx.impact>0?' - +'+wx.impact+' min buffer':' - no delay');
-    document.getElementById('wtemp').textContent=wx.temp+'F';
-    document.getElementById('swx').textContent='Live';document.getElementById('swx').className='alive';
-  }
-
+  if(wx&&wx.live){document.getElementById('wtxt').textContent=wx.desc+(wx.impact>0?' - +'+wx.impact+' min buffer':' - no delay');document.getElementById('wtemp').textContent=wx.temp+'F';document.getElementById('swx').textContent='Live';document.getElementById('swx').className='alive';}
   const pnote=document.getElementById('pnote');
   if(pb&&pb.length){
-    const{bus:nx,skipped}=findBoardable(pb);
+    const res=findBoardable(pb);const nx=res.bus;const skipped=res.skipped;
     if(nx){
-      const journey=busJourney(nx.load);
-      const pabt=am(nx.time,journey);
+      const journey=busJourney(nx.load);const pabt=am(nx.time,journey);
       document.getElementById('pnext').textContent=f12(nx.time)+' ('+ma(nx.time)+')';
-      document.getElementById('pload').textContent=nx.load;
-      document.getElementById('pload').className='cell-val '+loadClass(nx.load);
+      document.getElementById('pload').textContent=nx.load;document.getElementById('pload').className='cell-val '+loadClass(nx.load);
       document.getElementById('ppabt').textContent=f12(pabt);
-      ['128','165','166','168'].forEach(r=>{document.getElementById('b'+r).className=nx.route.includes(r)?'bb active':'bb';});
+      ['128','165','166','168'].forEach(function(r){document.getElementById('b'+r).className=nx.route.includes(r)?'bb active':'bb';});
       const mv=mu(nx.time);
       if(mv<=2){document.getElementById('ptag').textContent='BOARDING';document.getElementById('ptag').className='tag red';}
       else if(mv<=6){document.getElementById('ptag').textContent=mv+' MIN';document.getElementById('ptag').className='tag yellow';}
       else{document.getElementById('ptag').textContent=mv+' MIN';document.getElementById('ptag').className='tag green';}
-
-      document.getElementById('ptrips').innerHTML=pb.slice(0,5).map(t=>{
-        const skip=t.load==='FULL'?'<span class="tload full">FULL-SKIP</span>':'<span class="tload '+t.load.toLowerCase()+'">'+t.load+'</span>';
-        return'<div class="trow"><span class="troute">'+t.route+'</span><span class="tdest">'+(t.dest||'PORT AUTHORITY')+'</span>'+skip+'<span class="ttime '+(mu(t.time)<=5?'vsoon':mu(t.time)<=10?'soon':'')+'">'+f12(t.time)+' ('+ma(t.time)+')</span></div>';
+      document.getElementById('ptrips').innerHTML=pb.slice(0,5).map(function(t){
+        const sk=t.load==='FULL'?'<span class="tload full">FULL-SKIP</span>':'<span class="tload '+t.load.toLowerCase()+'">'+t.load+'</span>';
+        return'<div class="trow"><span class="troute">'+t.route+'</span><span class="tdest">'+(t.dest||'PORT AUTHORITY')+'</span>'+sk+'<span class="ttime '+(mu(t.time)<=5?'vsoon':mu(t.time)<=10?'soon':'')+'">'+f12(t.time)+' ('+ma(t.time)+')</span></div>';
       }).join('');
-
-      if(skipped>0)pnote.innerHTML='<span style="color:var(--danger)">Skipped '+skipped+' full bus'+(skipped>1?'es':'')+' — next boardable shown</span>';
-      else if(nx.cached)pnote.innerHTML='<span style="color:var(--warn)">Using cached data — live feed temporarily down</span>';
+      if(skipped>0)pnote.innerHTML='<span style="color:var(--danger)">Skipped '+skipped+' full bus'+(skipped>1?'es':'')+' - next boardable shown</span>';
+      else if(nx.cached)pnote.innerHTML='<span style="color:var(--warn)">Using cached data - live feed temporarily down</span>';
       else pnote.textContent='';
-      document.getElementById('snjt').textContent=nx.cached?'Cached':'Live';
-      document.getElementById('snjt').className=nx.cached?'apend':'alive';
-
-      // Recommended departure
+      document.getElementById('snjt').textContent=nx.cached?'Cached':'Live';document.getElementById('snjt').className=nx.cached?'apend':'alive';
       const ad=td(cfg.arr);
       const rd=am(ad,-(WALK_TO_STOP+journey+WALK_TO_ETRAIN+3+ETRAIN_RIDE+WALK_TO_OFFICE+wi));
       document.getElementById('rtime').textContent=f12(rd);
       document.getElementById('rsub').textContent='Leave by '+f12(rd)+' - arrive by '+f12(ad);
-      document.getElementById('rwhy').innerHTML=
-        '<strong>Breakdown:</strong> '+WALK_TO_STOP+' min walk'
-        +' + bus ~'+journey+' min ('+nx.load+')'
-        +' + '+WALK_TO_ETRAIN+' min to E train'
-        +' + ~3 min wait + '+ETRAIN_RIDE+' min ride'
-        +' + '+WALK_TO_OFFICE+' min walk'
-        +(wi>0?' + '+wi+' min weather':'')+' = <strong>~'+(WALK_TO_STOP+journey+WALK_TO_ETRAIN+3+ETRAIN_RIDE+WALK_TO_OFFICE+wi)+' min total</strong>';
-      document.getElementById('ddep').textContent=f12(rd);
-      document.getElementById('darr').textContent=f12(ad);
-      document.getElementById('dthr').textContent=cfg.thr+' min';
-
-      // Banner
-      const tod=mu(rd);const ha=et.alerts?.length>0;
-      const officeArrive=et.trains?.[0]?am(et.trains[0].time,ETRAIN_RIDE+WALK_TO_OFFICE):am(pabt,WALK_TO_ETRAIN+3+ETRAIN_RIDE+WALK_TO_OFFICE);
-      const slack=mu(ad)-mu(officeArrive);
-      const bn=document.getElementById('banner');
+      document.getElementById('rwhy').innerHTML='<strong>Breakdown:</strong> '+WALK_TO_STOP+' min walk + bus ~'+journey+' min ('+nx.load+') + '+WALK_TO_ETRAIN+' min to E train + ~3 min wait + '+ETRAIN_RIDE+' min ride + '+WALK_TO_OFFICE+' min walk'+(wi>0?' + '+wi+' min weather':'')+' = <strong>~'+(WALK_TO_STOP+journey+WALK_TO_ETRAIN+3+ETRAIN_RIDE+WALK_TO_OFFICE+wi)+' min total</strong>';
+      document.getElementById('ddep').textContent=f12(rd);document.getElementById('darr').textContent=f12(ad);document.getElementById('dthr').textContent=cfg.thr+' min';
+      const tod=mu(rd);const ha=et&&et.alerts&&et.alerts.length>0;
+      const officeArrive=et&&et.trains&&et.trains[0]?am(et.trains[0].time,ETRAIN_RIDE+WALK_TO_OFFICE):am(pabt,WALK_TO_ETRAIN+3+ETRAIN_RIDE+WALK_TO_OFFICE);
+      const slack=mu(ad)-mu(officeArrive);const bn=document.getElementById('banner');
       if(slack<-5||(ha&&et.alerts[0].toLowerCase().includes('suspend'))){
         bn.className='banner danger';document.getElementById('bicon').textContent='🚨';
         document.getElementById('blbl').textContent=ha?'E train disruption':'Risk of arriving late';
@@ -407,25 +360,22 @@ function render(pb,ab,et,wx,isStale,staleAge){
       }else if(tod<20||ha||nx.load==='FULL'){
         bn.className='banner warn';document.getElementById('bicon').textContent='⚠️';
         document.getElementById('blbl').textContent=tod<20?'Leave in '+tod+' min':nx.load==='FULL'?'Next bus is full':'Service alert on route';
-        document.getElementById('bsub').textContent='Next boardable: '+nx.route+' in '+ma(nx.time)+' ('+nx.load+') - E train: '+(et.trains?.[0]?ma(et.trains[0].time):'--');
+        document.getElementById('bsub').textContent='Next boardable: '+nx.route+' in '+ma(nx.time)+' ('+nx.load+') - E train: '+(et&&et.trains&&et.trains[0]?ma(et.trains[0].time):'--');
         document.getElementById('bdot').className='dot yellow';
       }else{
         bn.className='banner ok';document.getElementById('bicon').textContent='✅';
         document.getElementById('blbl').textContent='Looking good - depart by '+f12(rd);
-        document.getElementById('bsub').textContent='Next bus: '+nx.route+' in '+ma(nx.time)+' ('+nx.load+') - E train: '+(et.trains?.[0]?ma(et.trains[0].time):'--')+' - Est. arrival '+f12(officeArrive);
+        document.getElementById('bsub').textContent='Next bus: '+nx.route+' in '+ma(nx.time)+' ('+nx.load+') - E train: '+(et&&et.trains&&et.trains[0]?ma(et.trains[0].time):'--')+' - Est. arrival '+f12(officeArrive);
         document.getElementById('bdot').className='dot green';
       }
     }
   }else{
     document.getElementById('ptag').textContent='NO DATA';document.getElementById('ptag').className='tag grey';
-    pnote.textContent='Could not load bus data';
-    document.getElementById('snjt').textContent='Error';document.getElementById('snjt').className='apend';
+    pnote.textContent='Could not load bus data';document.getElementById('snjt').textContent='Error';document.getElementById('snjt').className='apend';
   }
-
-  // E Train
   const enote=document.getElementById('enote');
-  if(et.trains&&et.trains.length){
-    const t1=et.trains[0].time,t2=et.trains[1]?.time;
+  if(et&&et.trains&&et.trains.length){
+    const t1=et.trains[0].time;const t2=et.trains[1]?et.trains[1].time:null;
     const oa=am(t1,ETRAIN_RIDE+WALK_TO_OFFICE);
     document.getElementById('et1').textContent=f12(t1)+' ('+ma(t1)+')';
     document.getElementById('et2').textContent=t2?f12(t2)+' ('+ma(t2)+')':'--';
@@ -435,26 +385,22 @@ function render(pb,ab,et,wx,isStale,staleAge){
     else if(mv<=6){document.getElementById('etag').textContent=mv+' MIN';document.getElementById('etag').className='tag yellow';}
     else{document.getElementById('etag').textContent=mv+' MIN';document.getElementById('etag').className='tag green';}
     enote.textContent=et.live?'':'Estimated ('+(et.error||'live unavailable')+')';
-    if(et.alerts?.length)enote.innerHTML+='<br><span style="color:var(--danger)">Alert: '+et.alerts[0]+'</span>';
-    document.getElementById('smta').textContent=et.live?'Live':'Estimated';
-    document.getElementById('smta').className=et.live?'alive':'apend';
+    if(et.alerts&&et.alerts.length)enote.innerHTML+='<br><span style="color:var(--danger)">Alert: '+et.alerts[0]+'</span>';
+    document.getElementById('smta').textContent=et.live?'Live':'Estimated';document.getElementById('smta').className=et.live?'alive':'apend';
   }
-
-  // Alt route
   if(ab&&ab.length){
-    const{bus:an}=findBoardable(ab);
+    const res2=findBoardable(ab);const an=res2.bus;
     if(an){
       const aJ=busJourney(an.load);
       document.getElementById('anext').textContent=f12(an.time)+' ('+ma(an.time)+')';
-      document.getElementById('aload').textContent=an.load;
-      document.getElementById('aload').className='cell-val '+loadClass(an.load);
+      document.getElementById('aload').textContent=an.load;document.getElementById('aload').className='cell-val '+loadClass(an.load);
       if(pb&&pb.length){
-        const{bus:nx}=findBoardable(pb);
-        if(nx){
-          const diff=mu(am(nx.time,busJourney(nx.load)))-mu(am(an.time,aJ));
+        const nx2=findBoardable(pb).bus;
+        if(nx2){
+          const diff=mu(am(nx2.time,busJourney(nx2.load)))-mu(am(an.time,aJ));
           document.getElementById('avs').textContent=diff>0?diff+' min faster':diff===0?'Same':Math.abs(diff)+' min slower';
           document.getElementById('avs').className='cell-val '+(diff>=cfg.thr?'ok':diff<0?'late':'warn');
-          const pill=document.getElementById('apill'),ac=document.getElementById('altcard'),an2=document.getElementById('anote');
+          const pill=document.getElementById('apill');const ac=document.getElementById('altcard');const an2=document.getElementById('anote');
           if(diff>=cfg.thr){pill.textContent='TAKE ALT - '+diff+' min faster';pill.className='pill good';ac.className='alt rec';an2.innerHTML='<strong style="color:var(--ok)">Take Ferry Rd bus</strong> - '+diff+' min advantage meets your '+cfg.thr+' min threshold.';}
           else if(diff>0){pill.textContent=diff+' min faster - below threshold';pill.className='pill neutral';ac.className='alt';an2.textContent='Alt is '+diff+' min faster but below '+cfg.thr+' min threshold. Stick to Blvd East.';}
           else{pill.textContent=diff===0?'Same speed':Math.abs(diff)+' min slower';pill.className='pill bad';ac.className='alt';an2.textContent='Primary is faster. Stay on Blvd East.';}
@@ -465,33 +411,30 @@ function render(pb,ab,et,wx,isStale,staleAge){
   document.getElementById('lupd').textContent=f12(new Date());
 }
 
-let lastWx=null;
 async function refresh(){
   const ld=document.getElementById('loader');ld.classList.add('show');
   document.getElementById('lmsg').textContent='Fetching live data...';
-  let isStale=false,staleAge='';
+  var isStale=false;var staleAge='';
   try{
-    async function getBlvd(){const r1=await getNjtBuses(BS1,['128','165','166','168']);if(r1.length)return r1;return getNjtBuses(BS2,['128','165','166','168']);}
-    const[pb,ab,et,wx]=await Promise.all([
+    const results=await Promise.all([
       getBlvd(),
       getNjtBuses(FS,['156','158','159']),
       getEtrain(),
-      cfg.ow?getWx(cfg.ow).catch(()=>lastWx):Promise.resolve(lastWx)
+      cfg.ow?getWx(cfg.ow).catch(function(){return lastWx;}):Promise.resolve(lastWx)
     ]);
-    if(wx?.live)lastWx=wx;
-    // Cache good data
+    const pb=results[0];const ab=results[1];const et=results[2];const wx=results[3];
+    if(wx&&wx.live)lastWx=wx;
     if(pb&&pb.length){lastGoodBuses=pb;lastGoodAlt=ab;lastGoodTimestamp=Date.now();}
     render(pb,ab,et,lastWx||{impact:0},false,'');
   }catch(e){
     console.error('Refresh error:',e);
-    // Fall back to last good data
     if(lastGoodBuses&&lastGoodTimestamp){
       const ageMin=Math.round((Date.now()-lastGoodTimestamp)/60000);
-      staleAge=ageMin===0?'just now':ageMin+' min';
-      isStale=true;
+      staleAge=ageMin===0?'just now':ageMin+' min';isStale=true;
     }
-    const et=await getEtrain().catch(()=>({trains:[],live:false,alerts:[]}));
-    render(lastGoodBuses,lastGoodAlt,et,lastWx||{impact:0},isStale,staleAge);
+    getEtrain().catch(function(){return{trains:[],live:false,alerts:[]};}).then(function(et){
+      render(lastGoodBuses,lastGoodAlt,et,lastWx||{impact:0},isStale,staleAge);
+    });
   }
   ld.classList.remove('show');
 }
